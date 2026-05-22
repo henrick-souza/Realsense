@@ -1,0 +1,33 @@
+# RealSense L515 — Jetson AGX Orin
+# Prefer: ./scripts/run.sh  (handles xhost + xauth automatically)
+# Manual: xhost +local:docker && docker compose up -d
+
+services:
+  realsense:
+    image: realsense-l515:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - DISPLAY=${DISPLAY:-:0}
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${XAUTHORITY_FILE:-/tmp/.docker.xauth}:/root/.Xauthority:ro
+      - ./workspace:/workspace
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    device_cgroup_rules:
+      - 'c 189:* rmw'   # USB (usbdev)
+      - 'c  13:* rmw'   # HID/hidraw (L515 IMU)
+    group_add:
+      - video
+      - plugdev
+    network_mode: host
+    stdin_open: true
+    tty: true
+    restart: "no"

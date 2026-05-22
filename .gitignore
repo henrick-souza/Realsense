@@ -1,0 +1,16 @@
+# Logs de build
+*.log
+
+# Imagens geradas/capturadas
+camera_frame.jpg
+map3d_final.jpg
+map3d.jpg
+view.jpg
+
+# Arquivos temporários
+*.tmp
+*.pyc
+__pycache__/
+
+# Claude Code internal
+.claude/

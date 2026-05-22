@@ -1,0 +1,127 @@
+# Step 2: Mapeamento 3D — ROS2 Humble + RTAB-Map + L515
+# Jetson AGX Orin · arm64 · CUDA 12.6 · JetPack 6.1
+#
+# RTAB-Map instalado via apt (sub-pacotes individuais)
+# NÃO usa ros-humble-rtabmap-ros (meta-pacote que puxa librealsense2 2.57.7)
+# realsense-ros compilado do source (sem binário arm64 no apt)
+
+ARG BASE=realsense-l515:latest
+ARG ROS_DISTRO=humble
+
+# ── Stage 1: Builder — apenas realsense-ros ───────────────────────────────────
+FROM ${BASE} AS builder
+
+ARG ROS_DISTRO
+ENV DEBIAN_FRONTEND=noninteractive \
+    CCACHE_DIR=/root/.ccache \
+    CMAKE_C_COMPILER_LAUNCHER=ccache \
+    CMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        curl gnupg2 ca-certificates && \
+    curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc \
+        | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) \
+        signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+        http://packages.ros.org/ros2/ubuntu jammy main" \
+        > /etc/apt/sources.list.d/ros2.list
+
+RUN sed -i 's|http://ports.ubuntu.com/ubuntu-ports|http://ftp.fau.de/ubuntu-ports|g' /etc/apt/sources.list 2>/dev/null || true
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        ros-${ROS_DISTRO}-ros-base \
+        ros-${ROS_DISTRO}-image-transport \
+        ros-${ROS_DISTRO}-cv-bridge \
+        ros-${ROS_DISTRO}-camera-info-manager \
+        ros-${ROS_DISTRO}-diagnostic-updater \
+        ros-${ROS_DISTRO}-tf2-ros \
+        ros-${ROS_DISTRO}-tf2-geometry-msgs \
+        python3-colcon-common-extensions \
+        build-essential cmake git ccache
+
+RUN mkdir -p /ros2_ws/src && \
+    cd /ros2_ws/src && \
+    git clone --depth 1 --branch 4.51.1 \
+        https://github.com/IntelRealSense/realsense-ros.git
+
+RUN --mount=type=cache,target=/root/.ccache \
+    . /opt/ros/${ROS_DISTRO}/setup.sh && \
+    cd /ros2_ws && \
+    colcon build \
+        --packages-select realsense2_camera_msgs realsense2_camera \
+        --cmake-args \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="/usr/local;/opt/ros/${ROS_DISTRO}"
+
+# ── Stage 2: Runtime ──────────────────────────────────────────────────────────
+FROM ${BASE} AS runtime
+
+ARG ROS_DISTRO=humble
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+    ROS_DISTRO=${ROS_DISTRO} \
+    ROS_LOCALHOST_ONLY=0
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        curl gnupg2 ca-certificates && \
+    curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc \
+        | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) \
+        signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+        http://packages.ros.org/ros2/ubuntu jammy main" \
+        > /etc/apt/sources.list.d/ros2.list
+
+RUN sed -i 's|http://ports.ubuntu.com/ubuntu-ports|http://ftp.fau.de/ubuntu-ports|g' /etc/apt/sources.list 2>/dev/null || true
+
+# ROS2 base + RTAB-Map via apt (sub-pacotes, sem o meta-pacote ros-humble-rtabmap-ros)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        ros-${ROS_DISTRO}-ros-base \
+        ros-${ROS_DISTRO}-image-transport \
+        ros-${ROS_DISTRO}-image-transport-plugins \
+        ros-${ROS_DISTRO}-cv-bridge \
+        ros-${ROS_DISTRO}-camera-info-manager \
+        ros-${ROS_DISTRO}-diagnostic-updater \
+        ros-${ROS_DISTRO}-tf2-ros \
+        ros-${ROS_DISTRO}-tf2-geometry-msgs \
+        ros-${ROS_DISTRO}-tf2-sensor-msgs \
+        ros-${ROS_DISTRO}-imu-filter-madgwick \
+        ros-${ROS_DISTRO}-depth-image-proc \
+        ros-${ROS_DISTRO}-image-geometry \
+        ros-${ROS_DISTRO}-laser-geometry \
+        ros-${ROS_DISTRO}-pcl-ros \
+        ros-${ROS_DISTRO}-nav-msgs \
+        ros-${ROS_DISTRO}-rtabmap-slam \
+        ros-${ROS_DISTRO}-rtabmap-odom \
+        ros-${ROS_DISTRO}-rtabmap-msgs \
+        ros-${ROS_DISTRO}-rtabmap-util \
+        ros-${ROS_DISTRO}-rtabmap-conversions \
+        ros-${ROS_DISTRO}-rtabmap-sync \
+        python3-argcomplete
+
+COPY --from=builder /ros2_ws/install /ros2_ws/install
+
+RUN ldconfig
+
+RUN bash -c "\
+    source /opt/ros/${ROS_DISTRO}/setup.bash && \
+    source /ros2_ws/install/setup.bash && \
+    ros2 pkg list | grep -E 'realsense2_camera|rtabmap_slam|rtabmap_odom' && \
+    echo '[OK] todos os pacotes encontrados'"
+
+LABEL step="2" component="rtabmap-mapping" ros.distro="humble"
+
+COPY mapping/ /opt/mapping/
+COPY mapping/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+WORKDIR /workspace
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]
